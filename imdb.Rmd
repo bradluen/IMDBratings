@@ -1,0 +1,139 @@
+---
+title: "IMDB ratings"
+author: "Brad Luen"
+date: "Last updated `r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+## Objectives
+
+After this lecture, you should be able to:
+
+- Fit an interpretable nonlinear model (GAM) to a large data set.
+- Choose between visualizations of complex nonlinear models.
+
+## The data
+
+(Note: If you just want the minimal set of data that I perform the analysis on, go get `IMDBsample.txt`.)
+
+**How do IMDB movie ratings depend (on average) on year and length?**
+
+We could also reframe this question as:
+
+**How has the relationship between length and movie ratings changed over time?**
+
+Writing it this way might make us want to emphasize different features, and hence use different visualizations.
+
+In either case, rather than predictions per se, we want an interpretable model that lets us understand how the relationship between movie length and rating may have changed over time.
+
+The methods we use here can be fit to all movies on IMDB (around 245,000 normal length movies.) However, for reasons of computation time, I'll just use a sample of 20,000 movies between 1 and 3 hours long. I generated the sample by downloading the following two files from https://datasets.imdbws.com :
+
+- `title.ratings.tsv.gz`
+- `title.basics.tsv.gz`
+
+and running the following code:
+
+```{r, eval = FALSE}
+IMDBratings = read_tsv("title.ratings.tsv", na = "\\N", quote = '')
+IMDBtitles = read_tsv("title.basics.tsv", na = "\\N", quote = '')
+IMDB = left_join(IMDBratings, IMDBtitles)
+rm(IMDBratings)
+rm(IMDBtitles)
+IMDB = filter(IMDB, titleType == "movie")
+IMDBnormal = filter(IMDB, runtimeMinutes >= 60 & runtimeMinutes <= 180)
+# Drop NA's for year
+IMDBnormal = drop_na(IMDBnormal, startYear)
+set.seed(470670)
+IMDBsample = sample_n(IMDBnormal, 20000)
+write.table(IMDBsample, file = "IMDBsample.txt", row.names = F)
+```
+
+I saved the data in a file called `IMDBsample.txt`. 
+
+```{r}
+IMDBsample = read.table("IMDBsample.txt", header = TRUE)
+```
+
+```{r}
+summary(IMDBsample)
+```
+
+
+
+
+
+## Analysis
+
+I want to know if average rating varies by year (`startYear`) and movie length (`runtimeMinutes`.)
+
+*What exploratory plots would you do to see the shape of the relationship of the response with the explanatory variables?*
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+*What exploratory plots would you do to see if you need an interaction?*
+
+```{r}
+
+```
+
+After the exploratory plots:
+
+- Nothing looks especially linear, so I'll prefer a nonparametric model.
+- There's no clear additive relationship of `startYear` with `runtimeMinutes` in determining `averageRating`.
+
+There's too much data for a loess, so I'll fit a gam:
+
+```{r}
+library(mgcv)
+IMDB.gam = gam(averageRating ~ s(startYear, runtimeMinutes),
+               data = IMDBsample, method = "REML")
+```
+
+Predict on a grid and plot faceted by year:
+
+```{r}
+IMDBgrid = expand.grid(startYear = seq(1920, 2020, 10), runtimeMinutes = 60:180)
+IMDBgrid$averageRating = as.vector(predict(IMDB.gam, newdata = IMDBgrid))
+ggplot(IMDBgrid, aes(x = runtimeMinutes, y = averageRating, group = startYear)) +
+  geom_line() + facet_wrap(~startYear, ncol = 4) +
+  ggtitle("Thin-plate spline model for average IMDB rating by runtime and year")
+```
+
+We see that for "normal" length feature films, expected rating generally went up with runtime until 1970-80. After 1980 the pattern looks much less monotonic, with a clear minimum for movies around 80-90 movies (perhaps certain irreputable genres are more likely to make movies of that length.) The very high ratings for 60 minute movies may be because these lengths are more typical of "indie" movies, or perhaps film school projects that only you and four of your friends bother to rate on IMDB. This should be checkable from the available data, but is (and here are the magic words) beyond the scope of this document.
+
+You could also put all the lines on one panel and distinguish between them by color.
+
+*What does this plot show you that's not so clear on the faceted plot? What was clearer on the faceted plot?*
+
+```{r}
+ggplot(IMDBgrid, aes(x = runtimeMinutes, y = averageRating, group = startYear, color = startYear)) +
+  geom_line() +
+  ggtitle("Thin-plate spline model for average IMDB rating by runtime and year") +
+  scale_color_viridis_c()
+```
+
+You could also predict on a denser grid and draw a contour plot.
+
+*What does this plot show you that's not so clear on the faceted plot? What was clearer on the faceted plot?*
+
+```{r}
+IMDBgrid2 = expand.grid(startYear = 1899:2019, runtimeMinutes = 60:180)
+IMDBgrid2$averageRating = as.vector(predict(IMDB.gam, newdata = IMDBgrid2))
+ggplot(IMDBgrid2, aes(x = runtimeMinutes, y = startYear, fill = averageRating)) + geom_raster() + scale_fill_distiller(palette = "RdYlBu") + coord_fixed() + geom_contour(aes(z = averageRating)) + ggtitle("Contour plot of thin-plate spline model for IMDB ratings")
+```
+
+The plot shows local minina and maxima more clearly than the faceted plot. We see that long movies in the Sixties have very high average ratings, whereas movies around 80 minutes in the Eighties have very low low average ratings. On the other hand, it's hard to tell how close the relationship between runtime and rating is to monotonic for any given year, which is basically the question we're trying to answer.
+
+Conclusion: At least for normal-length feature films, longer movies tended to get higher IMDB ratings for movies up to about 1970. Subsequently the relationship has become more complicated, with some runtimes giving higher average ratings than others, but not in a monotonic way.
+
